@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>regression-trainer</title>
+<style>
+  :root { --bg:#0f1115; --card:#171a21; --ink:#e6e8ee; --muted:#9aa0ad;
+    --accent:#4f8cff; --good:#3fb950; --warn:#f0b429; --bad:#f85149; --line:#262b36; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI",sans-serif; padding:28px; }
+  main { max-width:1080px; margin:0 auto; }
+  h1 { font-size:1.6rem; margin:0 0 4px; }
+  h2 { font-size:1.1rem; border-bottom:1px solid var(--line); padding-bottom:6px; margin:26px 0 12px; }
+  .muted { color:var(--muted); font-size:.86rem; }
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-top:16px; }
+  label { display:block; font-size:.84rem; color:var(--muted); margin:10px 0 4px; }
+  textarea, input[type=number], select { width:100%; background:var(--bg); color:var(--ink);
+    border:1px solid var(--line); border-radius:8px; padding:8px; font:inherit; }
+  textarea { min-height:150px; font-family:ui-monospace,Consolas,monospace; font-size:.82rem; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; }
+  .row > div { flex:1; min-width:120px; }
+  .feats { display:flex; flex-wrap:wrap; gap:6px 16px; margin-top:6px; font-size:.9rem; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:10px 18px;
+    font-weight:600; font-size:.95rem; cursor:pointer; margin-top:14px; }
+  button:disabled { opacity:.5; cursor:wait; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; }
+  .card { background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:10px; }
+  .card .n { font-size:1.2rem; font-weight:700; }
+  .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:760px){ .grid-2 { grid-template-columns:1fr; } }
+  table { width:100%; border-collapse:collapse; font-size:.88rem; }
+  th,td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:500; }
+  .err { color:var(--bad); background:var(--card); border:1px solid var(--bad); border-radius:8px; padding:10px; margin-top:12px; }
+  #loading { display:none; color:var(--warn); margin-top:12px; }
+  .badge { display:inline-block; padding:1px 7px; border-radius:999px; font-size:.74rem; border:1px solid var(--line); }
+  svg { width:100%; height:auto; background:var(--bg); border:1px solid var(--line); border-radius:10px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>regression-trainer</h1>
+  <p class="muted">Linear &amp; polynomial regression from scratch (numpy). Paste a CSV, pick a target, train — charts render locally, no CDN.</p>
+
+  <div class="panel">
+    <label>CSV data (header row required)</label>
+    <textarea id="csv" spellcheck="false">year,revenue_m,adspend_m,growth_pct
+2016,12.4,3.1,4.1
+2017,14.8,3.6,19.4
+2018,15.2,4.0,2.7
+2019,18.7,4.6,23.0
+2020,21.0,5.1,12.3
+2021,24.3,6.0,15.7
+2022,27.1,6.8,11.5
+2023,31.4,7.5,15.9
+2024,35.0,8.4,11.5
+2025,40.2,9.5,14.9</textarea>
+
+    <div class="row">
+      <div>
+        <label>Target column</label>
+        <select id="target"></select>
+      </div>
+      <div>
+        <label>Degree (1 = linear)</label>
+        <input type="number" id="degree" value="1" min="1" max="8" step="1">
+      </div>
+      <div>
+        <label>Method</label>
+        <select id="method">
+          <option value="normal">normal equation</option>
+          <option value="gd">gradient descent</option>
+        </select>
+      </div>
+      <div>
+        <label>Test fraction</label>
+        <input type="number" id="test_size" value="0.2" min="0.05" max="0.6" step="0.05">
+      </div>
+      <div>
+        <label>CV folds (optional)</label>
+        <input type="number" id="cv" min="2" max="20" step="1" placeholder="none">
+      </div>
+    </div>
+
+    <label>Features (auto-select = all numeric except target)</label>
+    <div id="features" class="feats"></div>
+
+    <button id="train">Train model</button>
+    <div id="loading">Training…</div>
+    <div id="error"></div>
+  </div>
+
+  <h2>Metrics</h2>
+  <div id="metrics" class="cards"></div>
+
+  <h2>Charts</h2>
+  <div class="grid-2">
+    <div>
+      <p class="muted">Actual vs predicted (test set) — points hug the y=x line on a good fit.</p>
+      <div id="chart1"></div>
+    </div>
+    <div>
+      <p class="muted">Residual histogram — symmetric around zero suggests a well-specified model.</p>
+      <div id="chart2"></div>
+    </div>
+  </div>
+  <div id="chart3w">
+    <p class="muted">Fitted curve over the first feature.</p>
+    <div id="chart3"></div>
+  </div>
+
+  <h2>Model</h2>
+  <table>
+    <thead><tr><th>Term</th><th>Coefficient</th></tr></thead>
+    <tbody id="coeffs"></tbody>
+  </table>
+  <p class="muted" id="cvnote"></p>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const W = 660, H = 300;
+const PAD = 36, TPR = 18;
+
+function csvToHeaders(text) {
+  const match = text.match(/^(.*?)\r?\n/);
+  if (!match) return [];
+  return match[1].split(",").map(s => s.trim()).filter(Boolean);
+}
+function refreshColumns() {
+  const cols = csvToHeaders($("csv").value);
+  const sel = $("target");
+  const prev = sel.value;
+  sel.innerHTML = cols.map(c => `<option value="${c.replace(/"/g, "&quot;")}">${c}</option>`).join("");
+  if (prev && cols.includes(prev)) sel.value = prev;
+  const feats = $("features");
+  feats.innerHTML = cols.map(c =>
+    `<label style="display:flex;align-items:center;gap:5px;margin:0;min-width:110px">
+       <input type="checkbox" value="${c}" ${c !== sel.value ? "" : "disabled"}> ${c}</label>`).join("");
+  feats.querySelectorAll("input:not([disabled])").forEach(i => i.checked = true);
+}
+$("csv").addEventListener("input", refreshColumns);
+$("target").addEventListener("change", refreshColumns);
+refreshColumns();
+
+function svg(w, h, inner) {
+  return `<svg viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">${inner}</svg>`;
+}
+function axes(xat, yat, xmin, xmax, ymin, ymax, xlab, ylab) {
+  let out = `<line x1="${PAD}" y1="${H - PAD}" x2="${W - 8}" y2="${H - PAD}" stroke="#3a4252" stroke-width="1.5"/>
+             <line x1="${PAD}" y1="8" x2="${PAD}" y2="${H - PAD}" stroke="#3a4252" stroke-width="1.5"/>`;
+  for (let i = 0; i <= 4; i++) {
+    const vx = xmin + (xmax - xmin) * i / 4;
+    const xp = xat(vx), yp = yat(vx);
+    out += `<text x="${xp}" y="${H - PAD + 14}" fill="#9aa0ad" font-size="10" text-anchor="middle">${vx.toFixed(1)}</text>`;
+  }
+  for (let i = 0; i <= 5; i++) {
+    const vy = ymin + (ymax - ymin) * i / 5;
+    const yp = yat(vy);
+    out += `<text x="${PAD - 6}" y="${yp + 3.5}" fill="#9aa0ad" font-size="10" text-anchor="end">${vy.toFixed(1)}</text>`;
+  }
+  out += `<text x="${(W - PAD) / 2}" y="${H - 6}" fill="#9aa0ad" font-size="11" text-anchor="middle">${xlab}</text>
+          <text x="14" y="${H / 2}" fill="#9aa0ad" font-size="11" text-anchor="middle" transform="rotate(-90 14 ${H / 2})">${ylab}</text>`;
+  return out;
+}
+
+$("train").addEventListener("click", async () => {
+  const btn = $("train");
+  btn.disabled = true; $("loading").style.display = "block"; $("error").innerHTML = "";
+  const features = [...$("features").querySelectorAll("input:checked")].map(i => i.value);
+  const body = {
+    csv: $("csv").value,
+    target: $("target").value,
+    features,
+    degree: parseInt($("degree").value, 10) || 1,
+    method: $("method").value,
+    test_size: parseFloat($("test_size").value) || 0.2,
+    seed: 42
+  };
+  const cv = parseInt($("cv").value, 10);
+  if (cv) body.cv = cv;
+  try {
+    const res = await fetch("/api/train", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "training failed");
+    render(data);
+  } catch (err) {
+    $("error").innerHTML = `<div class="err">${err.message.replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]))}</div>`;
+  } finally {
+    btn.disabled = false; $("loading").style.display = "none";
+  }
+});
+
+function metricsCard(label, m, key) {
+  const items = [
+    ["R²", m.r2], ["RMSE", m.rmse], ["MAE", m.mae],
+    ["MAPE%", m.mape == null ? "—" : m.mape], ["n", m.n]
+  ].map(([k, v]) => `<div class="card"><div class="muted">${k}</div><div class="n">${typeof v === "number" ? v.toLocaleString() : v}</div></div>`).join("");
+  return `<div style="grid-column:1/-1"><h2 style="margin:14px 0 8px;border:0;padding:0">${label}</h2>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px">${items}</div></div>`;
+}
+
+function scatterChart(data) {
+  const pts = data.y.map((y, i) => [data.pred[i], y]);
+  const lo = Math.min(...pts.flat()), hi = Math.max(...pts.flat());
+  const span = (hi - lo) || 1;
+  const xmin = lo - span * 0.05, xmax = hi + span * 0.05, ymin = lo - span * 0.05, ymax = hi + span * 0.05;
+  const xat = v => PAD + (v - xmin) * (W - PAD - 24) / (xmax - xmin);
+  const yat = v => (H - PAD) - (v - ymin) * (H - PAD - 20) / (ymax - ymin);
+  let inner = axes(xat, yat, xmin, xmax, ymin, ymax, "predicted", "actual");
+  inner += `<line x1="${xat(xmin)}" y1="${yat(xmin)}" x2="${xat(xmax)}" y2="${yat(xmax)}" stroke="#3a4252" stroke-dasharray="4 4"/>`;
+  inner += pts.map(([p, a]) => `<circle cx="${xat(p).toFixed(1)}" cy="${yat(a).toFixed(1)}" r="3.5" fill="#4f8cff" opacity="0.85"/>`).join("");
+  return svg(W, H, inner);
+}
+
+function residualBars(data) {
+  const res = data.residuals;
+  if (!res.length) return svg(W, H, "");
+  const nBins = Math.max(6, Math.min(24, Math.round(Math.sqrt(res.length))));
+  const rmin = Math.min(...res), rmax = Math.max(...res);
+  const binW = (rmax - rmin) || 1, right = W - PAD - 24;
+  const bw = right / nBins;
+  const counts = new Array(nBins).fill(0);
+  res.forEach(r => {
+    const b = Math.min(nBins - 1, Math.max(0, Math.floor((r - rmin) / binW * nBins)));
+    counts[b]++;
+  });
+  const cmax = Math.max(...counts) || 1;
+  const xat = b => PAD + b * bw;
+  const yat = c => (H - PAD) - c / cmax * (H - PAD - 20);
+  let inner = `<line x1="${PAD}" y1="${H - PAD}" x2="${W - 8}" y2="${H - PAD}" stroke="#3a4252" stroke-width="1.5"/>
+               <line x1="${PAD}" y1="8" x2="${PAD}" y2="${H - PAD}" stroke="#3a4252" stroke-width="1.5"/>`;
+  counts.forEach((c, i) => {
+    const mid = rmin + (i + 0.5) * binW / nBins;
+    inner += `<rect x="${xat(i).toFixed(1)}" y="${yat(c).toFixed(1)}" width="${(bw - 2).toFixed(1)}"
+      height="${((H - PAD) - yat(c)).toFixed(1)}" fill="${mid >= 0 ? "#4f8cff" : "#f0b429"}" opacity="0.85"/>`;
+  });
+  for (let i = 0; i <= 4; i++) {
+    const v = rmin + (rmax - rmin) * i / 4;
+    inner += `<text x="${PAD + i / 4 * right}" y="${H - PAD + 14}" fill="#9aa0ad" font-size="10" text-anchor="middle">${v.toFixed(1)}</text>`;
+  }
+  inner += `<text x="${(W - PAD) / 2}" y="${H - 6}" fill="#9aa0ad" font-size="11" text-anchor="middle">residual</text>
+            <text x="14" y="${H / 2}" fill="#9aa0ad" font-size="11" text-anchor="middle" transform="rotate(-90 14 ${H / 2})">count</text>`;
+  return svg(W, H, inner);
+}
+
+function fitCurve(data) {
+  const { x, y, pred } = data.fit;
+  const xs = x.concat(pred), ys = y.concat(pred);
+  const xmin = Math.min(...xs), xmax = Math.max(...xs);
+  const ymin = Math.min(...ys), ymax = Math.max(...ys);
+  const spanX = (xmax - xmin) || 1, spanY = (ymax - ymin) || 1;
+  const xat = v => PAD + (v - xmin) * (W - PAD - 24) / spanX;
+  const yat = v => (H - PAD) - (v - ymin) * (H - PAD - 20) / spanY;
+  let path = `M${xat(x[0]).toFixed(1)} ${yat(pred[0]).toFixed(1)}`;
+  for (let i = 1; i < x.length; i++) path += ` L${xat(x[i]).toFixed(1)} ${yat(pred[i]).toFixed(1)}`;
+  let inner = axes(xat, yat, xmin, xmax, ymin, ymax, "x", "y");
+  inner += x.map((v, i) => `<circle cx="${xat(v).toFixed(1)}" cy="${yat(y[i]).toFixed(1)}" r="3" fill="#4f8cff" opacity=".7"/>`).join("");
+  inner += `<path d="${path}" stroke="#3fb950" stroke-width="2.5" fill="none"/>`;
+  return svg(W, H, inner);
+}
+
+function render(data) {
+  $("metrics").innerHTML = metricsCard("Train", data.metrics_train) + metricsCard("Test (held out)", data.metrics_test);
+  $("chart1").innerHTML = scatterChart(data.chart);
+  $("chart2").innerHTML = residualBars(data.chart);
+  $("chart3").innerHTML = fitCurve(data.chart);
+  const rows = [{ t: "intercept", c: data.intercept }].concat(data.coefficients.map(c => ({ t: c.name, c: c.value })));
+  $("coeffs").innerHTML = rows.map(r => `<tr><td>${r.t}</td><td>${r.c}</td></tr>`).join("");
+  const oc = `Overview: ${data.overview.rows} rows · ${data.overview.features.join(", ")} · ${data.overview.mirrors_model} via ${data.overview.method}`;
+  $("cvnote").textContent = data.cv ? oc + ` · CV ${data.cv.k}` : oc;
+  if (data.cv) {
+    const cs = $("coeffs");
+    cs.insertAdjacentHTML("beforebegin", `<p class="muted">Cross-validation (k=${data.cv.k}): R² = ${data.cv.mean} ± ${data.cv.std}</p>`);
+  }
+}
+</script>
+</body>
+</html>
